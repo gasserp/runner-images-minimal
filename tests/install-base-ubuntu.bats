@@ -29,3 +29,7 @@ setup() {
 @test "[ubuntu] BASE_PACKAGES no longer includes lsb-release" {
   ! assert_base_packages_contains lsb-release
 }
+
+@test "[ubuntu] BASE_PACKAGES includes libicu74 (installdependencies.sh cannot install ICU on 24.04)" {
+  assert_base_packages_contains libicu74
+}

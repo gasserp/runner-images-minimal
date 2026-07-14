@@ -16,6 +16,11 @@ source "${SCRIPT_DIR}/helpers.sh"
 
 # Packages kept deliberately small: just enough to fetch, verify and run the
 # GitHub Actions runner plus common toolchain expectations (git, jq, sudo).
+#
+# libicu74 is required by the runner's .NET runtime. It must be installed
+# explicitly: the runner's own installdependencies.sh (as of v2.317.0) only
+# probes libicu72 and older, finds none of them on Ubuntu 24.04, and installs
+# no ICU at all — which makes Runner.Listener crash on startup.
 BASE_PACKAGES=(
   ca-certificates
   curl
@@ -25,6 +30,7 @@ BASE_PACKAGES=(
   unzip
   sudo
   locales
+  libicu74
 )
 
 main() {

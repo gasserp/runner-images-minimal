@@ -149,6 +149,18 @@ else
   fail "installed runner version does not match expected ${EXPECTED_RUNNER_VERSION} (found: ${INSTALLED_VERSION:-unknown})"
 fi
 
+# Actually execute the .NET runner binary. This is the only check that proves
+# the native runtime dependencies (e.g. libicu) are really present — a missing
+# one makes Runner.Listener fail-fast at startup even though every file-layout
+# check above passes.
+LISTENER_VERSION="$(run_in_image_output 'cd "${HOME}" && ./bin/Runner.Listener --version' | tr -d '[:space:]')"
+
+if [[ "${LISTENER_VERSION}" == "${EXPECTED_RUNNER_VERSION}" ]]; then
+  pass "Runner.Listener executes and reports version ${EXPECTED_RUNNER_VERSION}"
+else
+  fail "Runner.Listener executes and reports version ${EXPECTED_RUNNER_VERSION} (got: ${LISTENER_VERSION:-no output})"
+fi
+
 ## --- entrypoint fail-fast behaviour ---------------------------------------
 
 MISSING_ENV_OUTPUT="$(docker run --rm "${IMAGE}" 2>&1)"
