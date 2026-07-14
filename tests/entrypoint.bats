@@ -83,7 +83,7 @@ setup() {
 # --- build_config_args -------------------------------------------------------
 
 @test "build_config_args includes core flags" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"--unattended"* ]]
   [[ "${output}" == *"https://github.com/o/r"* ]]
@@ -93,46 +93,76 @@ setup() {
 }
 
 @test "build_config_args propagates a custom RUNNER_NAME" {
-  run build_config_args "https://github.com/o/r" "tok" "custom-runner-name" "a,b" "_work" "false"
+  run build_config_args "https://github.com/o/r" "tok" "custom-runner-name" "a,b" "_work" "false" "false"
   [ "${status}" -eq 0 ]
   # Assert --name is immediately followed by the custom name (adjacent lines).
   [[ "${output}" == *$'--name\ncustom-runner-name'* ]]
 }
 
 @test "build_config_args propagates a custom RUNNER_WORK_DIR" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "/custom/work/dir" "false"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "/custom/work/dir" "false" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *$'--work\n/custom/work/dir'* ]]
 }
 
 @test "build_config_args propagates custom labels" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "gpu,large,self-hosted" "_work" "false"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "gpu,large,self-hosted" "_work" "false" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *$'--labels\ngpu,large,self-hosted'* ]]
 }
 
 @test "build_config_args omits --ephemeral when the flag is false" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" != *"--ephemeral"* ]]
 }
 
 @test "build_config_args omits --ephemeral for any non-'true' value" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "yes"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "yes" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" != *"--ephemeral"* ]]
 }
 
 @test "build_config_args adds ephemeral when requested" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "true"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "true" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"--ephemeral"* ]]
 }
 
 @test "build_config_args always includes --replace to survive re-registration" {
-  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "true"
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "true" "false"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"--replace"* ]]
+}
+
+@test "build_config_args includes --disableupdate when the flag is true" {
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false" "true"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"--disableupdate"* ]]
+}
+
+@test "build_config_args omits --disableupdate when the flag is false" {
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false" "false"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"--disableupdate"* ]]
+}
+
+@test "build_config_args omits --disableupdate when the flag is empty-but-present" {
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false" ""
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"--disableupdate"* ]]
+}
+
+@test "build_config_args omits --disableupdate for any other non-'true' value" {
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "false" "yes"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"--disableupdate"* ]]
+}
+
+@test "build_config_args places --disableupdate after --ephemeral when both are enabled" {
+  run build_config_args "https://github.com/o/r" "tok" "myname" "a,b" "_work" "true" "true"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *$'--ephemeral\n--disableupdate'* ]]
 }
 
 # --- deregister ---------------------------------------------------------------
@@ -285,7 +315,7 @@ EOF
   # into every job, so default-behaviour tests must unset them explicitly.
   RUNNER_REPO_URL="https://github.com/o/r" \
     RUNNER_TOKEN="tok" \
-    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL
+    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL RUNNER_DISABLE_UPDATE
       cd '${workdir}' && bash '${ENTRYPOINT}'"
 
   [ "${status}" -eq 0 ]
@@ -302,7 +332,7 @@ EOF
   # Unset ambient RUNNER_* vars exported by GitHub-hosted CI runners.
   RUNNER_REPO_URL="https://github.com/o/r" \
     RUNNER_TOKEN="tok" \
-    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL
+    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL RUNNER_DISABLE_UPDATE
       cd '${workdir}' && bash '${ENTRYPOINT}'"
 
   [ "${status}" -eq 0 ]
@@ -323,4 +353,33 @@ EOF
   [ "${status}" -eq 0 ]
   run cat "${workdir}/config.args"
   [[ "${output}" == *"self-hosted,linux,minimal"* ]]
+}
+
+@test "main propagates RUNNER_DISABLE_UPDATE=true as --disableupdate to config.sh" {
+  local workdir="${BATS_TEST_TMPDIR}/main-disable-update"
+  setup_mock_runner_dir "${workdir}"
+
+  RUNNER_REPO_URL="https://github.com/o/r" \
+    RUNNER_TOKEN="tok" \
+    RUNNER_DISABLE_UPDATE="true" \
+    run bash -c "cd '${workdir}' && bash '${ENTRYPOINT}'"
+
+  [ "${status}" -eq 0 ]
+  run cat "${workdir}/config.args"
+  [[ "${output}" == *"--disableupdate"* ]]
+}
+
+@test "main omits --disableupdate when RUNNER_DISABLE_UPDATE is unset" {
+  local workdir="${BATS_TEST_TMPDIR}/main-default-disable-update"
+  setup_mock_runner_dir "${workdir}"
+
+  # Unset ambient RUNNER_* vars exported by GitHub-hosted CI runners.
+  RUNNER_REPO_URL="https://github.com/o/r" \
+    RUNNER_TOKEN="tok" \
+    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL RUNNER_DISABLE_UPDATE
+      cd '${workdir}' && bash '${ENTRYPOINT}'"
+
+  [ "${status}" -eq 0 ]
+  run cat "${workdir}/config.args"
+  [[ "${output}" != *"--disableupdate"* ]]
 }
