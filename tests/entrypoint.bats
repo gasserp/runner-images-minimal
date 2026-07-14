@@ -180,15 +180,18 @@ exit 0
 EOF
   chmod +x "${workdir}/config.sh"
 
-  # Start a long-lived stand-in for run.sh, then shut it down.
-  ( cd "${workdir}" && sleep 60 & echo $! >"${workdir}/pid" )
-  local pid
-  pid="$(cat "${workdir}/pid")"
+  # Start a long-lived stand-in for run.sh directly, so $! is the sleep
+  # process itself and not a wrapper subshell. Keep it short: if shutdown
+  # fails to kill it, the wait below returns 0 after 5s instead of hanging.
+  sleep 5 &
+  local pid=$!
 
   ( cd "${workdir}" && shutdown "tok" "${pid}" )
 
-  # The process must be gone and config.sh remove must have been called.
-  ! kill -0 "${pid}" 2>/dev/null
+  # Reap the child; exit status 143 (128+SIGTERM) proves shutdown killed it.
+  local wait_status=0
+  wait "${pid}" || wait_status=$?
+  [ "${wait_status}" -eq 143 ]
   run cat "${workdir}/remove.args"
   [[ "${output}" == *"remove"* ]]
   [[ "${output}" == *"tok"* ]]
@@ -278,9 +281,12 @@ EOF
   local workdir="${BATS_TEST_TMPDIR}/main-default-name"
   setup_mock_runner_dir "${workdir}"
 
+  # GitHub-hosted CI runners export RUNNER_NAME (and other RUNNER_* vars)
+  # into every job, so default-behaviour tests must unset them explicitly.
   RUNNER_REPO_URL="https://github.com/o/r" \
     RUNNER_TOKEN="tok" \
-    run bash -c "cd '${workdir}' && bash '${ENTRYPOINT}'"
+    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL
+      cd '${workdir}' && bash '${ENTRYPOINT}'"
 
   [ "${status}" -eq 0 ]
   local expected_name
@@ -293,9 +299,11 @@ EOF
   local workdir="${BATS_TEST_TMPDIR}/main-default-work"
   setup_mock_runner_dir "${workdir}"
 
+  # Unset ambient RUNNER_* vars exported by GitHub-hosted CI runners.
   RUNNER_REPO_URL="https://github.com/o/r" \
     RUNNER_TOKEN="tok" \
-    run bash -c "cd '${workdir}' && bash '${ENTRYPOINT}'"
+    run bash -c "unset RUNNER_NAME RUNNER_LABELS RUNNER_WORK_DIR RUNNER_EPHEMERAL
+      cd '${workdir}' && bash '${ENTRYPOINT}'"
 
   [ "${status}" -eq 0 ]
   run cat "${workdir}/config.args"
