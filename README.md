@@ -197,3 +197,25 @@ requests, with three jobs:
    `docker/build-push-action` (loaded locally, never pushed, using a
    distro-scoped `type=gha` cache) and running `tests/validate-image.sh`
    against it.
+
+## Releases
+
+Images are published to the GitHub Container Registry under
+`ghcr.io/gasserp/runner-images-minimal/<distro>`, tagged with the
+`actions/runner` version and `latest`:
+
+```sh
+docker pull ghcr.io/gasserp/runner-images-minimal/ubuntu:latest
+docker pull ghcr.io/gasserp/runner-images-minimal/ubi9:2.317.0
+```
+
+Publishing is driven by `.github/workflows/release.yml`, which runs on a
+schedule (every 6 hours) and autodetects the latest `actions/runner` release.
+When a version has not been released here yet, it builds both base images with
+that version, validates them with `tests/validate-image.sh`, pushes them to
+GHCR (version + `latest` tags), and creates a matching `v<version>` GitHub
+Release. It can also be triggered manually via `workflow_dispatch`, with an
+optional `runner_version` input to build a specific version instead of the
+autodetected latest.
+
+Published images are **amd64-only** for now, matching CI.
