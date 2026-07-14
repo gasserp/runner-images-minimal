@@ -4,7 +4,7 @@
 # that fail before any network access happens.
 
 setup() {
-  SCRIPT="${BATS_TEST_DIRNAME}/../images/ubuntu/scripts/install-runner.sh"
+  SCRIPT="${BATS_TEST_DIRNAME}/../images/common/install-runner.sh"
   source "${SCRIPT}"
 }
 
@@ -102,4 +102,129 @@ setup() {
   run map_arch "${default_arch}"
   [ "${status}" -eq 0 ]
   [ "${output}" = "x64" ]
+}
+
+# --- main() end-to-end against a faked download/install tree ------------------
+#
+# These exercise main() past the arch guard by stubbing out curl/tar/chown on
+# PATH (no real network access or privileged chown) and pre-seeding a fake
+# bin/installdependencies.sh, so we can assert on whether SKIP_INSTALLDEPS
+# caused it to be invoked, and that ~/.runner-version is written regardless.
+# Run via a real `bash -c` subprocess (not bats' `run` alone) so the script's
+# own `set -euo pipefail` genuinely governs main(), same rationale as the
+# guard-clause tests above.
+
+# setup_fake_install_env populates $1 with stub curl/tar/chown executables
+# and $2 (acting as RUNNER_HOME) with a pre-seeded bin/installdependencies.sh
+# that records its own invocation, so main() never touches the network or a
+# real "runner" system account.
+setup_fake_install_env() {
+  local fakebin="$1"
+  local runner_home="$2"
+  mkdir -p "${fakebin}" "${runner_home}/bin"
+
+  cat >"${fakebin}/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stub curl: writes an empty placeholder at the -o target. No network call.
+out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+: > "${out}"
+EOF
+
+  cat >"${fakebin}/tar" <<'EOF'
+#!/usr/bin/env bash
+# Stub tar: no-op. bin/installdependencies.sh is pre-seeded by the test
+# instead of being extracted from a real tarball.
+exit 0
+EOF
+
+  cat >"${fakebin}/chown" <<'EOF'
+#!/usr/bin/env bash
+# Stub chown: no-op. Avoids requiring a real "runner" system account/root.
+exit 0
+EOF
+
+  chmod +x "${fakebin}/curl" "${fakebin}/tar" "${fakebin}/chown"
+
+  cat >"${runner_home}/bin/installdependencies.sh" <<EOF
+#!/usr/bin/env bash
+printf 'called\n' >> "${runner_home}/installdependencies.called"
+EOF
+  chmod +x "${runner_home}/bin/installdependencies.sh"
+}
+
+@test "main skips ./bin/installdependencies.sh and logs why when SKIP_INSTALLDEPS=true" {
+  local fakebin="${BATS_TEST_TMPDIR}/fakebin-skip-true"
+  local runner_home="${BATS_TEST_TMPDIR}/runner-home-skip-true"
+  setup_fake_install_env "${fakebin}" "${runner_home}"
+
+  run bash -c "
+    export PATH="${fakebin}:\${PATH}"
+    export RUNNER_HOME='${runner_home}'
+    export RUNNER_USER='runner'
+    export RUNNER_VERSION='2.317.0'
+    export SKIP_INSTALLDEPS=true
+    source '${SCRIPT}'
+    main
+  "
+
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"Skipping ./bin/installdependencies.sh (SKIP_INSTALLDEPS=true)"* ]]
+  [ ! -f "${runner_home}/installdependencies.called" ]
+  [ -f "${runner_home}/.runner-version" ]
+  run cat "${runner_home}/.runner-version"
+  [ "${output}" = "2.317.0" ]
+}
+
+@test "main calls ./bin/installdependencies.sh when SKIP_INSTALLDEPS=false" {
+  local fakebin="${BATS_TEST_TMPDIR}/fakebin-skip-false"
+  local runner_home="${BATS_TEST_TMPDIR}/runner-home-skip-false"
+  setup_fake_install_env "${fakebin}" "${runner_home}"
+
+  run bash -c "
+    export PATH="${fakebin}:\${PATH}"
+    export RUNNER_HOME='${runner_home}'
+    export RUNNER_USER='runner'
+    export RUNNER_VERSION='2.317.0'
+    export SKIP_INSTALLDEPS=false
+    source '${SCRIPT}'
+    main
+  "
+
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"Installing runner dependencies"* ]]
+  [[ "${output}" != *"Skipping ./bin/installdependencies.sh"* ]]
+  [ -f "${runner_home}/installdependencies.called" ]
+  [ -f "${runner_home}/.runner-version" ]
+  run cat "${runner_home}/.runner-version"
+  [ "${output}" = "2.317.0" ]
+}
+
+@test "main calls ./bin/installdependencies.sh when SKIP_INSTALLDEPS is unset" {
+  local fakebin="${BATS_TEST_TMPDIR}/fakebin-skip-unset"
+  local runner_home="${BATS_TEST_TMPDIR}/runner-home-skip-unset"
+  setup_fake_install_env "${fakebin}" "${runner_home}"
+
+  run bash -c "
+    unset SKIP_INSTALLDEPS
+    export PATH="${fakebin}:\${PATH}"
+    export RUNNER_HOME='${runner_home}'
+    export RUNNER_USER='runner'
+    export RUNNER_VERSION='2.317.0'
+    source '${SCRIPT}'
+    main
+  "
+
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"Installing runner dependencies"* ]]
+  [[ "${output}" != *"Skipping ./bin/installdependencies.sh"* ]]
+  [ -f "${runner_home}/installdependencies.called" ]
+  [ -f "${runner_home}/.runner-version" ]
+  run cat "${runner_home}/.runner-version"
+  [ "${output}" = "2.317.0" ]
 }

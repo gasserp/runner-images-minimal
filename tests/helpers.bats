@@ -3,7 +3,7 @@
 # Unit tests for the shared logging helpers in scripts/helpers.sh.
 
 setup() {
-  HELPERS="${BATS_TEST_DIRNAME}/../images/ubuntu/scripts/helpers.sh"
+  HELPERS="${BATS_TEST_DIRNAME}/../images/common/helpers.sh"
   source "${HELPERS}"
 }
 

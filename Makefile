@@ -1,25 +1,33 @@
-# Makefile for the minimal self-hosted GitHub Actions runner image.
+# Makefile for the minimal self-hosted GitHub Actions runner images.
 
-IMAGE        ?= runner-images-minimal:latest
+# DISTRO selects which image under images/<distro>/ to build (ubuntu | ubi9).
+DISTRO       ?= ubuntu
+IMAGE        ?= runner-images-minimal:$(DISTRO)
 RUNNER_VERSION ?= 2.317.0
-DOCKERFILE   := images/ubuntu/Dockerfile
-CONTEXT      := images/ubuntu
+# The build context is images/ so Dockerfiles can COPY shared files from
+# images/common/; each distro's Dockerfile is selected with -f.
+DOCKERFILE   := images/$(DISTRO)/Dockerfile
+CONTEXT      := images
 SH_FILES     := $(shell find . -name '*.sh' -not -path './*/_work/*')
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build lint test validate run
+.PHONY: help build build-all lint test validate run
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build the runner image (override RUNNER_VERSION=x.y.z)
+build: ## Build the runner image (override DISTRO=ubuntu|ubi9, RUNNER_VERSION=x.y.z)
 	docker build \
 		--build-arg RUNNER_VERSION=$(RUNNER_VERSION) \
 		-t $(IMAGE) \
 		-f $(DOCKERFILE) \
 		$(CONTEXT)
+
+build-all: ## Build every distro image (ubuntu and ubi9)
+	$(MAKE) build DISTRO=ubuntu
+	$(MAKE) build DISTRO=ubi9
 
 lint: ## Run shellcheck on all shell scripts
 	shellcheck -x -P SCRIPTDIR -S style $(SH_FILES)

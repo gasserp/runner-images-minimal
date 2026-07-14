@@ -3,17 +3,23 @@
 # validate-image.sh - black-box checks against a *built* runner image.
 #
 # Runs a series of `docker run` checks against the image and prints a
-# PASS/FAIL line for each. Exits non-zero if any check fails.
+# PASS/FAIL line for each. Exits non-zero if any check fails. All checks are
+# distro-agnostic (uid, sudo, common binaries, runner install layout), so the
+# same script validates any of the images under images/<distro>/.
 #
 # Usage:
-#   tests/validate-image.sh [IMAGE_TAG]
+#   tests/validate-image.sh [IMAGE_TAG] [DOCKERFILE]
 #
 # IMAGE_TAG defaults to runner-images-minimal:local. This script does not
 # build the image; run `make build` (or the CI build step) first.
 #
-# Optionally set EXPECTED_RUNNER_VERSION to compare against the version
-# baked into the image; it defaults to the RUNNER_VERSION build-arg default
-# declared in images/ubuntu/Dockerfile.
+# DOCKERFILE is only used to look up the default RUNNER_VERSION build-arg. If
+# omitted, it is derived from IMAGE_TAG's distro suffix
+# (runner-images-minimal:ubuntu -> images/ubuntu/Dockerfile,
+# runner-images-minimal:ubi9 -> images/ubi9/Dockerfile), falling back to
+# images/ubuntu/Dockerfile for tags without a recognized suffix (e.g. the
+# ":local" default or CI's ":ci" tag). Set EXPECTED_RUNNER_VERSION to bypass
+# the Dockerfile lookup entirely.
 #
 # shellcheck disable=SC2016
 # The single-quoted `[ ... ]` / shell snippets below are intentional: they
@@ -24,7 +30,24 @@ set -uo pipefail
 
 IMAGE="${1:-runner-images-minimal:local}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-DOCKERFILE="${SCRIPT_DIR}/../images/ubuntu/Dockerfile"
+
+# dockerfile_for_image derives the distro Dockerfile path from an image tag's
+# suffix, e.g. runner-images-minimal:ubuntu -> images/ubuntu/Dockerfile,
+# runner-images-minimal:ubi9 -> images/ubi9/Dockerfile. Tags without a
+# recognized distro suffix fall back to the ubuntu Dockerfile.
+dockerfile_for_image() {
+  local image="$1"
+  case "${image##*:}" in
+    ubuntu | ubi9)
+      printf '%s/../images/%s/Dockerfile' "${SCRIPT_DIR}" "${image##*:}"
+      ;;
+    *)
+      printf '%s/../images/ubuntu/Dockerfile' "${SCRIPT_DIR}"
+      ;;
+  esac
+}
+
+DOCKERFILE="${2:-$(dockerfile_for_image "${IMAGE}")}"
 
 PASS_COUNT=0
 FAIL_COUNT=0
