@@ -116,11 +116,11 @@ check "run.sh is present and executable" \
 check "entrypoint.sh is present and executable" \
   run_in_image '[ -x "${HOME}/entrypoint.sh" ]'
 
-# actions/runner does not ship a plain version file; ask the installed
-# config.sh itself, which prints a version banner (`./config.sh --version`).
-INSTALLED_VERSION="$(run_in_image_output 'cd "${HOME}" && ./config.sh --version 2>/dev/null | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -n1')"
+# install-runner.sh records the installed version in ~/.runner-version at
+# build time (config.sh has no --version interface to query instead).
+INSTALLED_VERSION="$(run_in_image_output 'cat "${HOME}/.runner-version" 2>/dev/null' | tr -d '[:space:]')"
 
-if [[ "${INSTALLED_VERSION}" == *"${EXPECTED_RUNNER_VERSION}"* ]]; then
+if [[ "${INSTALLED_VERSION}" == "${EXPECTED_RUNNER_VERSION}" ]]; then
   pass "installed runner version matches expected ${EXPECTED_RUNNER_VERSION} (found: ${INSTALLED_VERSION:-unknown})"
 else
   fail "installed runner version does not match expected ${EXPECTED_RUNNER_VERSION} (found: ${INSTALLED_VERSION:-unknown})"

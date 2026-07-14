@@ -62,6 +62,10 @@ main() {
   info "Installing runner dependencies"
   ./bin/installdependencies.sh
 
+  # Record the installed version so it can be verified without invoking the
+  # runner (config.sh has no --version interface).
+  printf '%s\n' "${runner_version}" > "${RUNNER_HOME}/.runner-version"
+
   info "Fixing ownership to ${RUNNER_USER}"
   chown -R "${RUNNER_USER}:${RUNNER_USER}" "${RUNNER_HOME}"
 
