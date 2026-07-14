@@ -1,5 +1,5 @@
 # Minimal containerized self-hosted GitHub Actions runner (RHEL UBI9-minimal).
-FROM registry.access.redhat.com/ubi9/ubi9-minimal:9.6
+FROM registry.access.redhat.com/ubi9-minimal:9.5
 
 # RUNNER_VERSION selects the actions/runner release to install.
 ARG RUNNER_VERSION=2.317.0

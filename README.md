@@ -10,7 +10,7 @@ Two base distributions are supported, selected with the `DISTRO` variable:
 | `DISTRO` | Base image                                          | Package manager |
 | -------- | --------------------------------------------------- | --------------- |
 | `ubuntu` | `ubuntu:24.04` (default)                            | `apt`           |
-| `ubi9`   | `registry.access.redhat.com/ubi9/ubi9-minimal`      | `microdnf`      |
+| `ubi9`   | `registry.access.redhat.com/ubi9-minimal`           | `microdnf`      |
 
 The entrypoint and runner-install logic are shared between the two images
 (`images/common/`); only the base-package install differs per distro.
