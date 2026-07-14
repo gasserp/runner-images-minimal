@@ -1,0 +1,9 @@
+# hadolint configuration for images/ubuntu/Dockerfile.
+#
+# DL3059 (multiple consecutive RUN instructions) is intentionally ignored:
+# the base-package install and the user-creation step are kept as separate
+# RUN layers on purpose, for clearer build history and cache invalidation
+# boundaries. Merging them would restructure the Dockerfile, which is out of
+# scope for the CI/lint work this file supports.
+ignore:
+  - DL3059

@@ -1,0 +1,10 @@
+# Keep the build context minimal.
+.git
+.gitignore
+tests/
+Makefile
+README.md
+**/*.md
+_work/
+.env
+*.token
