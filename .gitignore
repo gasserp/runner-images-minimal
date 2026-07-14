@@ -1,0 +1,11 @@
+# Runner working state
+_work/
+*.log
+
+# Local env / secrets
+.env
+*.token
+
+# OS / editor cruft
+.DS_Store
+*.swp
