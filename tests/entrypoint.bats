@@ -5,7 +5,7 @@
 # binaries so we can assert on the exact arguments passed to the runner.
 
 setup() {
-  ENTRYPOINT="${BATS_TEST_DIRNAME}/../images/ubuntu/entrypoint.sh"
+  ENTRYPOINT="${BATS_TEST_DIRNAME}/../images/common/entrypoint.sh"
   # Sourcing is safe: the main guard prevents execution.
   source "${ENTRYPOINT}"
 }

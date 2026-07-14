@@ -1,4 +1,4 @@
-# hadolint configuration for images/ubuntu/Dockerfile.
+# hadolint configuration for the per-distro Dockerfiles under images/<distro>/.
 #
 # DL3059 (multiple consecutive RUN instructions) is intentionally ignored:
 # the base-package install and the user-creation step are kept as separate

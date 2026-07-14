@@ -5,6 +5,11 @@
 # Reads RUNNER_VERSION and TARGETARCH from the environment. Installs into
 # RUNNER_HOME (default /home/runner) and runs the runner's own dependency
 # installer. Intended to run as root during the image build.
+#
+# Set SKIP_INSTALLDEPS=true to skip ./bin/installdependencies.sh. That helper
+# shells out to a system package manager (apt/yum/dnf); on base images that
+# lack one (e.g. ubi9-minimal) the .NET runtime dependencies must instead be
+# installed up front by the distro's install-base.sh.
 
 set -euo pipefail
 
@@ -59,8 +64,12 @@ main() {
   tar xzf "${tarball}"
   rm -f "${tarball}"
 
-  info "Installing runner dependencies"
-  ./bin/installdependencies.sh
+  if [[ "${SKIP_INSTALLDEPS:-}" == "true" ]]; then
+    info "Skipping ./bin/installdependencies.sh (SKIP_INSTALLDEPS=true); runtime dependencies must be provided by install-base.sh"
+  else
+    info "Installing runner dependencies"
+    ./bin/installdependencies.sh
+  fi
 
   # Record the installed version so it can be verified without invoking the
   # runner (config.sh has no --version interface).

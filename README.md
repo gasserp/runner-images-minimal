@@ -1,13 +1,23 @@
 # runner-images-minimal
 
 A minimal, containerized self-hosted [GitHub Actions runner](https://github.com/actions/runner)
-image. It builds on `ubuntu:24.04`, installs only the packages needed to fetch
-and run the runner, registers itself against a repository using a short-lived
-registration token, and deregisters cleanly on shutdown.
+image. It installs only the packages needed to fetch and run the runner,
+registers itself against a repository using a short-lived registration token,
+and deregisters cleanly on shutdown.
+
+Two base distributions are supported, selected with the `DISTRO` variable:
+
+| `DISTRO` | Base image                                          | Package manager |
+| -------- | --------------------------------------------------- | --------------- |
+| `ubuntu` | `ubuntu:24.04` (default)                            | `apt`           |
+| `ubi9`   | `registry.access.redhat.com/ubi9/ubi9-minimal`      | `microdnf`      |
+
+The entrypoint and runner-install logic are shared between the two images
+(`images/common/`); only the base-package install differs per distro.
 
 ## Features
 
-- Small, single-stage Ubuntu 24.04 image.
+- Small, single-stage images on Ubuntu 24.04 or RHEL UBI9-minimal.
 - Non-root `runner` user (uid 1001) with passwordless sudo.
 - Multi-arch aware (`amd64` / `arm64`) via the Docker `TARGETARCH` build arg.
 - Clean registration and deregistration (SIGTERM/SIGINT deregister the runner).
@@ -16,14 +26,23 @@ registration token, and deregisters cleanly on shutdown.
 
 ## Quick start
 
-Build the image (optionally pin a runner version):
+Build the image (optionally pin a runner version). `DISTRO` defaults to
+`ubuntu`; pass `DISTRO=ubi9` for the UBI9-minimal image:
 
 ```sh
-make build RUNNER_VERSION=2.317.0
-# or directly:
+make build RUNNER_VERSION=2.317.0            # ubuntu (default)
+make build DISTRO=ubi9                       # RHEL UBI9-minimal
+make build-all                               # both images
+
+# or directly (note the build context is images/, with -f selecting the distro):
 docker build --build-arg RUNNER_VERSION=2.317.0 \
-  -t runner-images-minimal:latest images/ubuntu
+  -t runner-images-minimal:ubuntu -f images/ubuntu/Dockerfile images
+docker build \
+  -t runner-images-minimal:ubi9 -f images/ubi9/Dockerfile images
 ```
+
+Each `make build` tags the image `runner-images-minimal:$(DISTRO)` by default
+(override with `IMAGE=`).
 
 Get a registration token from your repository settings
 (`Settings -> Actions -> Runners -> New self-hosted runner`), or via the API,
@@ -33,13 +52,15 @@ then run:
 docker run --rm -it \
   -e RUNNER_REPO_URL=https://github.com/OWNER/REPO \
   -e RUNNER_TOKEN=YOUR_REGISTRATION_TOKEN \
-  runner-images-minimal:latest
+  runner-images-minimal:ubuntu
 ```
 
-The `make run` target wraps the same command:
+The `make run` target wraps the same command and honours `DISTRO` (it runs the
+`runner-images-minimal:$(DISTRO)` tag):
 
 ```sh
 make run RUNNER_REPO_URL=https://github.com/OWNER/REPO RUNNER_TOKEN=xxxx
+make run DISTRO=ubi9 RUNNER_REPO_URL=https://github.com/OWNER/REPO RUNNER_TOKEN=xxxx
 ```
 
 ## Environment variables
@@ -60,33 +81,75 @@ Build-time args:
 | `RUNNER_VERSION` | `2.317.0` | `actions/runner` release to install.           |
 | `TARGETARCH`     | `amd64`   | Target architecture (auto-set under BuildKit). |
 
+Make variables:
+
+| Variable         | Default                        | Description                                        |
+| ---------------- | ------------------------------ | -------------------------------------------------- |
+| `DISTRO`         | `ubuntu`                       | Which image to build/run (`ubuntu` or `ubi9`).     |
+| `IMAGE`          | `runner-images-minimal:$(DISTRO)` | Image tag used by `build`, `run` and `validate`. |
+| `RUNNER_VERSION` | `2.317.0`                      | Runner release passed as a build arg.              |
+
 ## Layout
+
+Shared, distro-agnostic code lives in `images/common/`; each distro directory
+holds only its `Dockerfile` and its `install-base.sh`. The Docker build context
+is `images/` (not `images/<distro>/`) so the Dockerfiles can `COPY` the shared
+files; the distro is selected with `-f images/<distro>/Dockerfile`.
 
 ```
 .
-├── Makefile                     # build / lint / test / validate / run targets
+├── Makefile                     # build / build-all / lint / test / validate / run
 ├── README.md
 ├── .gitignore
-├── .dockerignore
-├── .hadolint.yaml                # hadolint config (Dockerfile lint)
+├── .dockerignore                # applies to root-context builds
+├── .hadolint.yaml               # hadolint config (Dockerfile lint)
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                # lint + unit-tests + build-and-validate
+│       └── ci.yml               # lint + unit-tests + build-and-validate
 ├── images/
-│   └── ubuntu/
-│       ├── Dockerfile           # ubuntu:24.04 based image
-│       ├── entrypoint.sh        # configures + runs the runner (as runner user)
+│   ├── .dockerignore            # applies to the images/ build context
+│   ├── common/                  # shared, distro-agnostic code
+│   │   ├── entrypoint.sh        # configures + runs the runner (as runner user)
+│   │   ├── helpers.sh           # shared logging helpers (sourced)
+│   │   └── install-runner.sh    # downloads + installs actions/runner
+│   ├── ubuntu/
+│   │   ├── Dockerfile           # ubuntu:24.04 based image
+│   │   └── scripts/
+│   │       └── install-base.sh  # apt base packages
+│   └── ubi9/
+│       ├── Dockerfile           # ubi9-minimal based image
 │       └── scripts/
-│           ├── helpers.sh       # shared logging helpers (sourced)
-│           ├── install-base.sh  # apt base packages
-│           └── install-runner.sh# downloads + installs actions/runner
+│           └── install-base.sh  # microdnf base packages + .NET deps
 └── tests/
     ├── entrypoint.bats          # unit tests for entrypoint (incl. mocked main())
     ├── helpers.bats             # unit tests for the logging helpers
-    ├── install-base.bats        # unit tests for the base package list
+    ├── install-base-ubuntu.bats # unit tests for ubuntu's base package list
+    ├── install-base-ubi9.bats   # unit tests for ubi9's base package list
     ├── install-runner.bats      # unit tests for arch mapping + main() guards
+    ├── lib/
+    │   └── install-base-common.bash # shared setup/assertions for both install-base-*.bats
     └── validate-image.sh        # black-box checks against a *built* image
 ```
+
+### Distro notes
+
+- **Ubuntu** installs base packages with `apt` and lets the runner's own
+  `./bin/installdependencies.sh` pull in the .NET runtime dependencies. The
+  base package list was trimmed — `gnupg` and `lsb-release` are no longer
+  installed, as the runner does not need them.
+- **UBI9-minimal** has no `yum`/`dnf`, so `./bin/installdependencies.sh` cannot
+  run; `install-runner.sh` is invoked with `SKIP_INSTALLDEPS=true` and the .NET
+  runtime dependencies (`libicu`, `krb5-libs`, `openssl-libs`, `zlib`) are
+  installed explicitly by its `install-base.sh` via `microdnf`, with
+  `lttng-ust` (optional .NET tracing) attempted best-effort since it may be
+  missing from the freely available UBI repos. `curl` is not installed because
+  the base image's `curl-minimal` already provides it (and conflicts with the
+  full package). The `runner` user is created after the base install because
+  `useradd` (from `shadow-utils`) is not present until then, and the
+  `en_US.UTF-8` locale comes from `glibc-langpack-en` (no `locale-gen` step).
+- **Alpine** is intentionally not supported: `actions/runner` ships only
+  glibc-linked Linux binaries, with no official musl build, so it cannot run on
+  a musl-based Alpine image without an unsupported compatibility shim.
 
 ## Testing
 
@@ -100,14 +163,15 @@ passed to `config.sh`) run it in a real `bash` subprocess against mocked
 scripts' own `set -euo pipefail` guards).
 
 - `make lint` runs `shellcheck -S style` on every `*.sh` file (this includes
-  `tests/validate-image.sh`). CI additionally runs
-  [hadolint](https://github.com/hadolint/hadolint) against
-  `images/ubuntu/Dockerfile` (config in `.hadolint.yaml`).
+  `tests/validate-image.sh` and the shared scripts under `images/common/`). CI
+  additionally runs [hadolint](https://github.com/hadolint/hadolint) against
+  the per-distro Dockerfiles (config in `.hadolint.yaml`).
 - `make test` runs the [bats](https://github.com/bats-core/bats-core) suite in
   `tests/` — pure-function unit tests plus mocked end-to-end tests, no Docker
   required.
 - `make validate` runs `tests/validate-image.sh` against a **built** image
-  (default tag `runner-images-minimal:latest`, or override with `IMAGE=`).
+  (default tag `runner-images-minimal:$(DISTRO)`, i.e. `:ubuntu` unless
+  `DISTRO`/`IMAGE` is overridden).
   It checks the `runner` user (uid 1001), passwordless sudo, required
   binaries (`git`, `curl`, `jq`, `tar`, `unzip`), that `config.sh`/`run.sh`
   are present and executable, that the installed runner version matches the
@@ -126,8 +190,10 @@ make build && make validate
 `.github/workflows/ci.yml` runs on every push to `main` and on pull
 requests, with three jobs:
 
-1. `lint` — shellcheck (`make lint`) + hadolint on the Dockerfile.
+1. `lint` — shellcheck (`make lint`) + hadolint on the Ubuntu Dockerfile.
 2. `unit-tests` — installs bats and runs `make test`.
-3. `build-and-validate` — needs both jobs above; builds the image with
-   `docker/build-push-action` (loaded locally, never pushed) and runs
-   `tests/validate-image.sh` against it.
+3. `build-and-validate` — needs both jobs above; runs as a `fail-fast: false`
+   matrix over `distro: [ubuntu, ubi9]`, building each image with
+   `docker/build-push-action` (loaded locally, never pushed, using a
+   distro-scoped `type=gha` cache) and running `tests/validate-image.sh`
+   against it.

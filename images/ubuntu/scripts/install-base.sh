@@ -7,8 +7,11 @@
 
 set -euo pipefail
 
+# The build copies helpers.sh next to this script under /tmp/scripts/, so it is
+# sourced from SCRIPT_DIR at build time; the source= directive below points at
+# its in-repo location for shellcheck.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-# shellcheck source=helpers.sh
+# shellcheck source=../../common/helpers.sh
 source "${SCRIPT_DIR}/helpers.sh"
 
 # Packages kept deliberately small: just enough to fetch, verify and run the
@@ -22,8 +25,6 @@ BASE_PACKAGES=(
   unzip
   sudo
   locales
-  gnupg
-  lsb-release
 )
 
 main() {
