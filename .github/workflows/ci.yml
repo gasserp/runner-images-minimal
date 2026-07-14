@@ -101,19 +101,18 @@ jobs:
           cache-from: type=gha,scope=ubuntu
           cache-to: type=gha,mode=max,scope=ubuntu
 
-      # Layer the terraform flavor on the just-built base.
+      # Layer the terraform flavor on the just-built base with a plain
+      # `docker build`: the buildx docker-container driver used by
+      # build-push-action is an isolated BuildKit instance that cannot see
+      # engine-local images, so FROM runner-images-minimal:ubuntu (loaded by
+      # the previous step) only resolves via the engine's own builder.
       - name: Build terraform flavor image
-        uses: docker/build-push-action@v6
-        with:
-          context: images
-          file: images/flavors/terraform/Dockerfile
-          build-args: |
-            BASE_IMAGE=runner-images-minimal:ubuntu
-          tags: runner-images-minimal:terraform
-          load: true
-          push: false
-          cache-from: type=gha,scope=terraform
-          cache-to: type=gha,mode=max,scope=terraform
+        run: |
+          docker build \
+            --build-arg BASE_IMAGE=runner-images-minimal:ubuntu \
+            -t runner-images-minimal:terraform \
+            -f images/flavors/terraform/Dockerfile \
+            images
 
       - name: Validate terraform flavor image
         run: tests/validate-flavor-terraform.sh "runner-images-minimal:terraform"
