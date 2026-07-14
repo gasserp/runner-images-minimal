@@ -73,13 +73,15 @@ make run DISTRO=ubi9 RUNNER_REPO_URL=https://github.com/OWNER/REPO RUNNER_TOKEN=
 | `RUNNER_LABELS`    | no       | `self-hosted,linux,minimal`| Comma-separated labels applied to the runner.           |
 | `RUNNER_WORK_DIR`  | no       | `_work`                    | Working directory for job checkouts.                    |
 | `RUNNER_EPHEMERAL` | no       | `false`                    | Set to `true` to add `--ephemeral` (one job per runner).|
+| `RUNNER_DISABLE_UPDATE` | no  | `false`                    | Set to `true` to add `--disableupdate` (skip runner self-update). Defaults to `true` in flavor images. |
 
 Build-time args:
 
-| Arg              | Default   | Description                                    |
-| ---------------- | --------- | ---------------------------------------------- |
-| `RUNNER_VERSION` | `2.317.0` | `actions/runner` release to install.           |
-| `TARGETARCH`     | `amd64`   | Target architecture (auto-set under BuildKit). |
+| Arg                | Default   | Description                                    |
+| ------------------ | --------- | ---------------------------------------------- |
+| `RUNNER_VERSION`   | `2.317.0` | `actions/runner` release to install.           |
+| `TERRAFORM_VERSION`| `1.9.8`   | Terraform release baked into the terraform flavor image. |
+| `TARGETARCH`       | `amd64`   | Target architecture (auto-set under BuildKit). |
 
 Make variables:
 
@@ -88,6 +90,53 @@ Make variables:
 | `DISTRO`         | `ubuntu`                       | Which image to build/run (`ubuntu` or `ubi9`).     |
 | `IMAGE`          | `runner-images-minimal:$(DISTRO)` | Image tag used by `build`, `run` and `validate`. |
 | `RUNNER_VERSION` | `2.317.0`                      | Runner release passed as a build arg.              |
+| `FLAVOR_IMAGE`   | `runner-images-minimal:terraform` | Tag used by `build-flavor` and `validate-flavor`. |
+| `TERRAFORM_VERSION` | `1.9.8`                     | Terraform release baked into the terraform flavor. |
+
+## Flavors
+
+Flavor images layer extra tooling onto a base runner image. They exist for
+**ephemeral runner fleets**, where a runner handles a single job and is then
+destroyed: installing tools at job time would repeat a download on every job
+and add a point of network failure mid-job. Flavors instead **bake the tools
+into the image at build time** (checksum-verified and version-pinned), so jobs
+start with everything already present and never install anything.
+
+Flavors also default `RUNNER_DISABLE_UPDATE=true`: an ephemeral runner would
+otherwise re-download a runner self-update on nearly every job start. Override
+it at run time with `-e RUNNER_DISABLE_UPDATE=false` if you want self-updates.
+
+### terraform
+
+Bakes a pinned [Terraform](https://www.terraform.io/) into the `ubuntu` base
+and advertises a `terraform` label so workflows can target it with
+`runs-on: [self-hosted, terraform]` without any deploy-time label config.
+
+```sh
+# Build the ubuntu base, then layer the terraform flavor on top of it:
+make build DISTRO=ubuntu
+make build-flavor                              # tags runner-images-minimal:terraform
+make build-flavor TERRAFORM_VERSION=1.9.8      # pin a specific Terraform version
+
+# or directly (build context is images/):
+docker build \
+  --build-arg BASE_IMAGE=runner-images-minimal:ubuntu \
+  --build-arg TERRAFORM_VERSION=1.9.8 \
+  -t runner-images-minimal:terraform \
+  -f images/flavors/terraform/Dockerfile images
+
+# Validate the built flavor image (base contract + terraform checks):
+make validate-flavor
+```
+
+Run it like any other runner image; the `terraform` label is already set:
+
+```sh
+docker run --rm -it \
+  -e RUNNER_REPO_URL=https://github.com/OWNER/REPO \
+  -e RUNNER_TOKEN=YOUR_REGISTRATION_TOKEN \
+  runner-images-minimal:terraform
+```
 
 ## Layout
 
@@ -98,7 +147,7 @@ files; the distro is selected with `-f images/<distro>/Dockerfile`.
 
 ```
 .
-├── Makefile                     # build / build-all / lint / test / validate / run
+├── Makefile                     # build / build-all / build-flavor / lint / test / validate / validate-flavor / run
 ├── README.md
 ├── .gitignore
 ├── .dockerignore                # applies to root-context builds
@@ -116,10 +165,15 @@ files; the distro is selected with `-f images/<distro>/Dockerfile`.
 │   │   ├── Dockerfile           # ubuntu:24.04 based image
 │   │   └── scripts/
 │   │       └── install-base.sh  # apt base packages
-│   └── ubi9/
-│       ├── Dockerfile           # ubi9-minimal based image
-│       └── scripts/
-│           └── install-base.sh  # microdnf base packages + .NET deps
+│   ├── ubi9/
+│   │   ├── Dockerfile           # ubi9-minimal based image
+│   │   └── scripts/
+│   │       └── install-base.sh  # microdnf base packages + .NET deps
+│   └── flavors/                 # tooling layered on a base image
+│       └── terraform/
+│           ├── Dockerfile       # FROM a base image + baked-in Terraform
+│           └── scripts/
+│               └── install-terraform.sh # downloads + checksum-verifies Terraform
 └── tests/
     ├── entrypoint.bats          # unit tests for entrypoint (incl. mocked main())
     ├── helpers.bats             # unit tests for the logging helpers
@@ -128,7 +182,8 @@ files; the distro is selected with `-f images/<distro>/Dockerfile`.
     ├── install-runner.bats      # unit tests for arch mapping + main() guards
     ├── lib/
     │   └── install-base-common.bash # shared setup/assertions for both install-base-*.bats
-    └── validate-image.sh        # black-box checks against a *built* image
+    ├── validate-image.sh        # black-box checks against a *built* image
+    └── validate-flavor-terraform.sh # base contract + terraform checks for the flavor
 ```
 
 ### Distro notes
@@ -197,6 +252,9 @@ requests, with three jobs:
    `docker/build-push-action` (loaded locally, never pushed, using a
    distro-scoped `type=gha` cache) and running `tests/validate-image.sh`
    against it.
+4. `build-and-validate-flavor` — needs both `lint` and `unit-tests`; builds the
+   `ubuntu` base, layers the terraform flavor on it (`BASE_IMAGE=runner-images-minimal:ubuntu`),
+   and runs `tests/validate-flavor-terraform.sh` against the result.
 
 ## Releases
 
@@ -207,15 +265,19 @@ Images are published to the GitHub Container Registry under
 ```sh
 docker pull ghcr.io/gasserp/runner-images-minimal/ubuntu:latest
 docker pull ghcr.io/gasserp/runner-images-minimal/ubi9:2.317.0
+docker pull ghcr.io/gasserp/runner-images-minimal/terraform:latest
 ```
 
 Publishing is driven by `.github/workflows/release.yml`, which runs on a
 schedule (every 6 hours) and autodetects the latest `actions/runner` release.
 When a version has not been released here yet, it builds both base images with
-that version, validates them with `tests/validate-image.sh`, pushes them to
-GHCR (version + `latest` tags), and creates a matching `v<version>` GitHub
-Release. It can also be triggered manually via `workflow_dispatch`, with an
-optional `runner_version` input to build a specific version instead of the
-autodetected latest.
+that version, validates them with `tests/validate-image.sh`, and pushes them to
+GHCR (version + `latest` tags). It then layers the terraform flavor on the
+just-pushed `ubuntu` image, validates it with
+`tests/validate-flavor-terraform.sh`, and pushes
+`ghcr.io/gasserp/runner-images-minimal/terraform` too, before creating a
+matching `v<version>` GitHub Release. It can also be triggered manually via
+`workflow_dispatch`, with an optional `runner_version` input to build a
+specific version instead of the autodetected latest.
 
 Published images are **amd64-only** for now, matching CI.

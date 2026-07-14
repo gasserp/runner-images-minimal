@@ -11,10 +11,11 @@
 #   RUNNER_TOKEN     - registration token
 #
 # Optional env vars:
-#   RUNNER_NAME      - runner name          (default: hostname)
-#   RUNNER_LABELS    - comma separated      (default: self-hosted,linux,minimal)
-#   RUNNER_WORK_DIR  - work directory       (default: _work)
-#   RUNNER_EPHEMERAL - "true" to add --ephemeral
+#   RUNNER_NAME           - runner name          (default: hostname)
+#   RUNNER_LABELS         - comma separated       (default: self-hosted,linux,minimal)
+#   RUNNER_WORK_DIR       - work directory        (default: _work)
+#   RUNNER_EPHEMERAL      - "true" to add --ephemeral
+#   RUNNER_DISABLE_UPDATE - "true" to add --disableupdate (skip runner self-update)
 
 set -euo pipefail
 
@@ -51,6 +52,7 @@ validate_env() {
 # build_config_args assembles the argument list for ./config.sh on stdout,
 # one argument per line, from explicit parameters. Pure function for testing.
 #   $1 repo_url  $2 token  $3 name  $4 labels  $5 work_dir  $6 ephemeral
+#   $7 disable_update
 build_config_args() {
   local repo_url="$1"
   local token="$2"
@@ -58,6 +60,7 @@ build_config_args() {
   local labels="$4"
   local work_dir="$5"
   local ephemeral="$6"
+  local disable_update="$7"
 
   printf '%s\n' \
     --unattended \
@@ -70,6 +73,10 @@ build_config_args() {
 
   if [[ "${ephemeral}" == "true" ]]; then
     printf '%s\n' --ephemeral
+  fi
+
+  if [[ "${disable_update}" == "true" ]]; then
+    printf '%s\n' --disableupdate
   fi
 }
 
@@ -106,6 +113,7 @@ main() {
   labels="$(resolve_labels "${RUNNER_LABELS:-}")"
   local work_dir="${RUNNER_WORK_DIR:-_work}"
   local ephemeral="${RUNNER_EPHEMERAL:-false}"
+  local disable_update="${RUNNER_DISABLE_UPDATE:-false}"
 
   # Read the generated arguments into an array (one per line).
   local config_args=()
@@ -113,7 +121,8 @@ main() {
   while IFS= read -r line; do
     config_args+=("${line}")
   done < <(build_config_args \
-    "${repo_url}" "${token}" "${name}" "${labels}" "${work_dir}" "${ephemeral}")
+    "${repo_url}" "${token}" "${name}" "${labels}" "${work_dir}" \
+    "${ephemeral}" "${disable_update}")
 
   printf '>>> Configuring runner %s with labels %s\n' "${name}" "${labels}" >&2
   ./config.sh "${config_args[@]}"
