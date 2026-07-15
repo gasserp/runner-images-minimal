@@ -81,6 +81,11 @@ Build-time args:
 | ------------------ | --------- | ---------------------------------------------- |
 | `RUNNER_VERSION`   | `2.317.0` | `actions/runner` release to install.           |
 | `TERRAFORM_VERSION`| `1.9.8`   | Terraform release baked into the terraform flavor image. |
+| `NODE_VERSION`     | `22.12.0` | Node.js release baked into the node flavor image. |
+| `GO_VERSION`       | `1.23.4`  | Go release baked into the go flavor image.     |
+| `RUST_VERSION`     | `1.83.0`  | Rust release baked into the rust flavor image. |
+| `DART_VERSION`     | `3.6.0`   | Dart SDK release baked into the dart flavor image. |
+| `COMPOSER_VERSION` | `2.8.3`   | Composer release baked into the php flavor image. |
 | `TARGETARCH`       | `amd64`   | Target architecture (auto-set under BuildKit). |
 
 Make variables:
@@ -90,7 +95,9 @@ Make variables:
 | `DISTRO`         | `ubuntu`                       | Which image to build/run (`ubuntu` or `ubi9`).     |
 | `IMAGE`          | `runner-images-minimal:$(DISTRO)` | Image tag used by `build`, `run` and `validate`. |
 | `RUNNER_VERSION` | `2.317.0`                      | Runner release passed as a build arg.              |
-| `FLAVOR_IMAGE`   | `runner-images-minimal:terraform` | Tag used by `build-flavor` and `validate-flavor`. |
+| `FLAVOR`         | `terraform`                    | Which flavor `build-flavor` and `validate-flavor` target. |
+| `FLAVOR_IMAGE`   | `runner-images-minimal:$(FLAVOR)` | Tag used by `build-flavor` and `validate-flavor`. |
+| `FLAVOR_BUILD_ARGS` | terraform pin (see Makefile) | Extra `--build-arg` flags for `build-flavor`, e.g. `--build-arg NODE_VERSION=…`. |
 | `TERRAFORM_VERSION` | `1.9.8`                     | Terraform release baked into the terraform flavor. |
 
 ## Flavors
@@ -106,36 +113,60 @@ Flavors also default `RUNNER_DISABLE_UPDATE=true`: an ephemeral runner would
 otherwise re-download a runner self-update on nearly every job start. Override
 it at run time with `-e RUNNER_DISABLE_UPDATE=false` if you want self-updates.
 
-### terraform
+Ten flavors are available, covering the most used package ecosystems plus
+Terraform. Each advertises its own label (`self-hosted,linux,minimal,<flavor>`)
+so workflows can target it with `runs-on: [self-hosted, <flavor>]` without any
+deploy-time label config:
 
-Bakes a pinned [Terraform](https://www.terraform.io/) into the `ubuntu` base
-and advertises a `terraform` label so workflows can target it with
-`runs-on: [self-hosted, terraform]` without any deploy-time label config.
+| Flavor      | Ecosystem            | Tooling baked in                                | Install method |
+| ----------- | -------------------- | ----------------------------------------------- | -------------- |
+| `terraform` | Terraform registry   | `terraform` (pinned `TERRAFORM_VERSION`)        | pinned tarball, checksum-verified |
+| `node`      | npm                  | `node`, `npm`, `npx`, `corepack` (pinned `NODE_VERSION`) | pinned tarball, checksum-verified |
+| `python`    | PyPI                 | `python3`, `pip3`, `venv`                       | apt (distro archive) |
+| `java`      | Maven Central        | OpenJDK 21 (headless), `mvn`                    | apt (distro archive) |
+| `dotnet`    | NuGet                | .NET SDK 8.0                                    | apt (distro archive) |
+| `go`        | Go modules           | `go`, `gofmt` (pinned `GO_VERSION`)             | pinned tarball, checksum-verified |
+| `rust`      | crates.io (Cargo)    | `rustc`, `cargo` + `gcc` linker (pinned `RUST_VERSION`) | pinned tarball, checksum-verified |
+| `ruby`      | RubyGems             | `ruby`, `gem`, `bundler` + build tools          | apt (distro archive) |
+| `php`       | Packagist (Composer) | `php` CLI + `composer` (pinned `COMPOSER_VERSION`) | apt + pinned phar, checksum-verified |
+| `dart`      | pub.dev              | `dart` (pinned `DART_VERSION`)                  | pinned zip, checksum-verified |
+
+Tools with an official, checksummed Linux release artifact are downloaded
+pinned and checksum-verified (like the runner itself); runtimes without one
+(python, java, ruby, dotnet, php's CLI) come from the Ubuntu archive, where
+apt's signature checking applies. The apt-based flavors (and rust, which needs
+apt for its `gcc` linker) therefore require the **ubuntu** base; `terraform`,
+`node`, `go` and `dart` work on either base.
+
+Build any flavor with `FLAVOR=`:
 
 ```sh
-# Build the ubuntu base, then layer the terraform flavor on top of it:
+# Build the ubuntu base, then layer a flavor on top of it:
 make build DISTRO=ubuntu
-make build-flavor                              # tags runner-images-minimal:terraform
+make build-flavor                              # terraform (default), tags runner-images-minimal:terraform
+make build-flavor FLAVOR=node                  # tags runner-images-minimal:node
 make build-flavor TERRAFORM_VERSION=1.9.8      # pin a specific Terraform version
+make build-flavor FLAVOR=node \
+  FLAVOR_BUILD_ARGS='--build-arg NODE_VERSION=22.12.0'  # pin another flavor's tool
 
 # or directly (build context is images/):
 docker build \
   --build-arg BASE_IMAGE=runner-images-minimal:ubuntu \
-  --build-arg TERRAFORM_VERSION=1.9.8 \
-  -t runner-images-minimal:terraform \
-  -f images/flavors/terraform/Dockerfile images
+  --build-arg NODE_VERSION=22.12.0 \
+  -t runner-images-minimal:node \
+  -f images/flavors/node/Dockerfile images
 
-# Validate the built flavor image (base contract + terraform checks):
-make validate-flavor
+# Validate the built flavor image (base contract + flavor tool checks):
+make validate-flavor FLAVOR=node
 ```
 
-Run it like any other runner image; the `terraform` label is already set:
+Run it like any other runner image; the flavor label is already set:
 
 ```sh
 docker run --rm -it \
   -e RUNNER_REPO_URL=https://github.com/OWNER/REPO \
   -e RUNNER_TOKEN=YOUR_REGISTRATION_TOKEN \
-  runner-images-minimal:terraform
+  runner-images-minimal:node
 ```
 
 ## Layout
@@ -170,20 +201,29 @@ files; the distro is selected with `-f images/<distro>/Dockerfile`.
 │   │   └── scripts/
 │   │       └── install-base.sh  # microdnf base packages + .NET deps
 │   └── flavors/                 # tooling layered on a base image
-│       └── terraform/
-│           ├── Dockerfile       # FROM a base image + baked-in Terraform
-│           └── scripts/
-│               └── install-terraform.sh # downloads + checksum-verifies Terraform
+│       ├── terraform/           # each flavor: Dockerfile + scripts/install-<flavor>.sh
+│       ├── node/
+│       ├── python/
+│       ├── java/
+│       ├── dotnet/
+│       ├── go/
+│       ├── rust/
+│       ├── ruby/
+│       ├── php/
+│       └── dart/
 └── tests/
     ├── entrypoint.bats          # unit tests for entrypoint (incl. mocked main())
     ├── helpers.bats             # unit tests for the logging helpers
     ├── install-base-ubuntu.bats # unit tests for ubuntu's base package list
     ├── install-base-ubi9.bats   # unit tests for ubi9's base package list
     ├── install-runner.bats      # unit tests for arch mapping + main() guards
+    ├── install-terraform.bats   # deep-dive tests for the terraform install script
+    ├── install-flavors.bats     # shared tests for the other flavor install scripts
     ├── lib/
     │   └── install-base-common.bash # shared setup/assertions for both install-base-*.bats
     ├── validate-image.sh        # black-box checks against a *built* image
-    └── validate-flavor-terraform.sh # base contract + terraform checks for the flavor
+    ├── validate-flavor.sh       # generic base contract + flavor tool checks
+    └── validate-flavor-terraform.sh # terraform-specific flavor checks
 ```
 
 ### Distro notes
@@ -252,9 +292,10 @@ requests, with three jobs:
    `docker/build-push-action` (loaded locally, never pushed, using a
    distro-scoped `type=gha` cache) and running `tests/validate-image.sh`
    against it.
-4. `build-and-validate-flavor` — needs both `lint` and `unit-tests`; builds the
-   `ubuntu` base, layers the terraform flavor on it (`BASE_IMAGE=runner-images-minimal:ubuntu`),
-   and runs `tests/validate-flavor-terraform.sh` against the result.
+4. `build-and-validate-flavor` — needs both `lint` and `unit-tests`; runs as a
+   `fail-fast: false` matrix over all ten flavors, building the `ubuntu` base,
+   layering each flavor on it (`BASE_IMAGE=runner-images-minimal:ubuntu`), and
+   running `tests/validate-flavor.sh <flavor>` against the result.
 
 ## Releases
 
@@ -272,10 +313,10 @@ Publishing is driven by `.github/workflows/release.yml`, which runs on a
 schedule (every 6 hours) and autodetects the latest `actions/runner` release.
 When a version has not been released here yet, it builds both base images with
 that version, validates them with `tests/validate-image.sh`, and pushes them to
-GHCR (version + `latest` tags). It then layers the terraform flavor on the
-just-pushed `ubuntu` image, validates it with
-`tests/validate-flavor-terraform.sh`, and pushes
-`ghcr.io/gasserp/runner-images-minimal/terraform` too, before creating a
+GHCR (version + `latest` tags). It then layers every flavor on the just-pushed
+`ubuntu` image (a matrix over all ten), validates each with
+`tests/validate-flavor.sh`, and pushes
+`ghcr.io/gasserp/runner-images-minimal/<flavor>` too, before creating a
 matching `v<version>` GitHub Release. It can also be triggered manually via
 `workflow_dispatch`, with an optional `runner_version` input to build a
 specific version instead of the autodetected latest.

@@ -6,8 +6,17 @@ IMAGE        ?= runner-images-minimal:$(DISTRO)
 RUNNER_VERSION ?= 2.317.0
 # TERRAFORM_VERSION must match the ARG default in the terraform flavor Dockerfile.
 TERRAFORM_VERSION ?= 1.9.8
-# Tag applied to the built terraform flavor image.
-FLAVOR_IMAGE ?= runner-images-minimal:terraform
+# FLAVOR selects which image under images/flavors/<flavor>/ build-flavor builds.
+FLAVOR       ?= terraform
+# Tag applied to the built flavor image.
+FLAVOR_IMAGE ?= runner-images-minimal:$(FLAVOR)
+# Extra --build-arg flags passed to build-flavor. Defaults to pinning
+# TERRAFORM_VERSION for the terraform flavor; override to pin other flavors,
+# e.g. FLAVOR_BUILD_ARGS='--build-arg NODE_VERSION=22.12.0'.
+ifeq ($(FLAVOR),terraform)
+FLAVOR_BUILD_ARGS ?= --build-arg TERRAFORM_VERSION=$(TERRAFORM_VERSION)
+endif
+FLAVOR_BUILD_ARGS ?=
 # The build context is images/ so Dockerfiles can COPY shared files from
 # images/common/; each distro's Dockerfile is selected with -f.
 DOCKERFILE   := images/$(DISTRO)/Dockerfile
@@ -33,12 +42,12 @@ build-all: ## Build every distro image (ubuntu and ubi9)
 	$(MAKE) build DISTRO=ubuntu
 	$(MAKE) build DISTRO=ubi9
 
-build-flavor: ## Build the terraform flavor on top of IMAGE (override BASE via IMAGE=, TERRAFORM_VERSION=)
+build-flavor: ## Build the flavor on top of IMAGE (override BASE via IMAGE=, FLAVOR=)
 	docker build \
 		--build-arg BASE_IMAGE=$(IMAGE) \
-		--build-arg TERRAFORM_VERSION=$(TERRAFORM_VERSION) \
+		$(FLAVOR_BUILD_ARGS) \
 		-t $(FLAVOR_IMAGE) \
-		-f images/flavors/terraform/Dockerfile \
+		-f images/flavors/$(FLAVOR)/Dockerfile \
 		$(CONTEXT)
 
 lint: ## Run shellcheck on all shell scripts
@@ -50,8 +59,8 @@ test: ## Run the bats test suite
 validate: ## Validate a built image (requires `make build` first; override IMAGE=)
 	tests/validate-image.sh $(IMAGE)
 
-validate-flavor: ## Validate the built terraform flavor (requires `make build-flavor` first)
-	tests/validate-flavor-terraform.sh $(FLAVOR_IMAGE)
+validate-flavor: ## Validate the built flavor (requires `make build-flavor` first)
+	tests/validate-flavor.sh $(FLAVOR) $(FLAVOR_IMAGE)
 
 run: ## Run the image (needs RUNNER_REPO_URL and RUNNER_TOKEN)
 	docker run --rm -it \

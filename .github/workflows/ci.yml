@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install shellcheck
         run: |
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install bats
         run: |
@@ -58,7 +58,7 @@ jobs:
         distro: [ubuntu, ubi9]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -78,12 +78,16 @@ jobs:
         run: tests/validate-image.sh "runner-images-minimal:${{ matrix.distro }}"
 
   build-and-validate-flavor:
-    name: Build terraform flavor and validate
+    name: Build flavor and validate (${{ matrix.flavor }})
     runs-on: ubuntu-latest
     needs: [lint, unit-tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [terraform, node, python, java, dotnet, go, rust, ruby, php, dart]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -99,20 +103,20 @@ jobs:
           load: true
           push: false
           cache-from: type=gha,scope=ubuntu
-          cache-to: type=gha,mode=max,scope=ubuntu
+          # cache-from only: the matrix jobs would race writing the same scope.
 
-      # Layer the terraform flavor on the just-built base with a plain
-      # `docker build`: the buildx docker-container driver used by
-      # build-push-action is an isolated BuildKit instance that cannot see
-      # engine-local images, so FROM runner-images-minimal:ubuntu (loaded by
-      # the previous step) only resolves via the engine's own builder.
-      - name: Build terraform flavor image
+      # Layer the flavor on the just-built base with a plain `docker build`:
+      # the buildx docker-container driver used by build-push-action is an
+      # isolated BuildKit instance that cannot see engine-local images, so FROM
+      # runner-images-minimal:ubuntu (loaded by the previous step) only resolves
+      # via the engine's own builder.
+      - name: Build flavor image
         run: |
           docker build \
             --build-arg BASE_IMAGE=runner-images-minimal:ubuntu \
-            -t runner-images-minimal:terraform \
-            -f images/flavors/terraform/Dockerfile \
+            -t "runner-images-minimal:${{ matrix.flavor }}" \
+            -f "images/flavors/${{ matrix.flavor }}/Dockerfile" \
             images
 
-      - name: Validate terraform flavor image
-        run: tests/validate-flavor-terraform.sh "runner-images-minimal:terraform"
+      - name: Validate flavor image
+        run: tests/validate-flavor.sh "${{ matrix.flavor }}" "runner-images-minimal:${{ matrix.flavor }}"
