@@ -13,6 +13,10 @@ on:
         description: 'actions/runner version to build (empty = autodetect latest)'
         required: false
         type: string
+      mirror_version:
+        description: 'Mirror an already-published version from GHCR to Docker Hub (e.g. 2.336.0). Skips the build entirely.'
+        required: false
+        type: string
 
 # Serialize runs so two overlapping schedules cannot both see a version as
 # "new" and race to publish it.
@@ -24,6 +28,9 @@ jobs:
   check:
     name: Detect target runner version
     runs-on: ubuntu-latest
+    # A mirror-only dispatch republishes existing images; skipping this job
+    # skips the whole build chain that depends on it.
+    if: inputs.mirror_version == ''
     permissions:
       contents: read
     outputs:
@@ -99,6 +106,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Docker Hub is optional: releases keep working (GHCR only) until the
+      # DOCKERHUB_NAMESPACE repository variable is set.
+      - name: Log in to Docker Hub
+        if: vars.DOCKERHUB_NAMESPACE != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       # Build and load locally (amd64 only, same as CI). Sharing the CI cache
       # scope (scope=<distro>) lets these builds reuse CI's layer cache.
       - name: Build image
@@ -132,6 +148,21 @@ jobs:
           docker push "${IMAGE}:${VERSION}"
           docker push "${IMAGE}:latest"
 
+      # Docker Hub has no nested repositories, so each variant gets its own
+      # repo: <namespace>/runner-images-minimal-<variant>.
+      - name: Tag and push to Docker Hub
+        if: vars.DOCKERHUB_NAMESPACE != ''
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          IMAGE="docker.io/${NAMESPACE}/runner-images-minimal-${{ matrix.distro }}"
+          docker tag "runner-images-minimal:${{ matrix.distro }}" "${IMAGE}:${VERSION}"
+          docker tag "runner-images-minimal:${{ matrix.distro }}" "${IMAGE}:latest"
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:latest"
+
   build-push-flavor:
     name: Build, validate and push flavor (${{ matrix.flavor }})
     runs-on: ubuntu-latest
@@ -157,6 +188,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: vars.DOCKERHUB_NAMESPACE != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Layer the flavor on the ubuntu base just pushed by build-push
       # (pulled from GHCR by the FROM). Build and load locally for validation.
@@ -191,6 +229,19 @@ jobs:
           docker push "${IMAGE}:${VERSION}"
           docker push "${IMAGE}:latest"
 
+      - name: Tag and push to Docker Hub
+        if: vars.DOCKERHUB_NAMESPACE != ''
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          IMAGE="docker.io/${NAMESPACE}/runner-images-minimal-${{ matrix.flavor }}"
+          docker tag "runner-images-minimal:${{ matrix.flavor }}" "${IMAGE}:${VERSION}"
+          docker tag "runner-images-minimal:${{ matrix.flavor }}" "${IMAGE}:latest"
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:latest"
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -206,6 +257,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
+          NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
@@ -228,6 +280,15 @@ jobs:
             for FLAVOR in terraform node python java dotnet go rust ruby php dart; do
               echo "- \`${IMAGE_BASE}/${FLAVOR}:${VERSION}\` (also \`${IMAGE_BASE}/${FLAVOR}:latest\`) — ubuntu base + baked-in ${FLAVOR} tooling"
             done
+
+            if [ -n "${NAMESPACE}" ]; then
+              echo
+              echo "The same images are mirrored to Docker Hub:"
+              echo
+              for VARIANT in ubuntu ubi9 terraform node python java dotnet go rust ruby php dart; do
+                echo "- \`${NAMESPACE}/runner-images-minimal-${VARIANT}:${VERSION}\` (also \`:latest\`)"
+              done
+            fi
           } > release-notes.md
 
           # gh release create creates the tag (at the current commit) and the
@@ -235,3 +296,53 @@ jobs:
           gh release create "${TAG}" \
             --title "${TAG}" \
             --notes-file release-notes.md
+
+  mirror:
+    name: Mirror an existing version to Docker Hub
+    runs-on: ubuntu-latest
+    if: inputs.mirror_version != ''
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # imagetools copies manifests and blobs registry-to-registry, so no image
+      # is ever pulled onto the runner's disk (all 12 would not fit anyway).
+      - name: Copy every variant from GHCR to Docker Hub
+        env:
+          VERSION: ${{ inputs.mirror_version }}
+          NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+
+          if [ -z "${NAMESPACE}" ]; then
+            echo "::error::repository variable DOCKERHUB_NAMESPACE is not set"
+            exit 1
+          fi
+
+          for VARIANT in ubuntu ubi9 terraform node python java dotnet go rust ruby php dart; do
+            SRC="ghcr.io/${{ github.repository }}/${VARIANT}:${VERSION}"
+            DST="docker.io/${NAMESPACE}/runner-images-minimal-${VARIANT}"
+            echo "::group::${VARIANT}"
+            docker buildx imagetools create \
+              --tag "${DST}:${VERSION}" \
+              --tag "${DST}:latest" \
+              "${SRC}"
+            echo "::endgroup::"
+          done
