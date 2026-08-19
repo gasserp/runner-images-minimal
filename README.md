@@ -309,6 +309,26 @@ docker pull ghcr.io/gasserp/runner-images-minimal/ubi9:2.317.0
 docker pull ghcr.io/gasserp/runner-images-minimal/terraform:latest
 ```
 
+The same images are mirrored to Docker Hub. Docker Hub has no nested
+repositories, so each variant is its own repo named
+`<namespace>/runner-images-minimal-<variant>`:
+
+```sh
+docker pull <namespace>/runner-images-minimal-ubuntu:latest
+docker pull <namespace>/runner-images-minimal-ubi9:2.317.0
+docker pull <namespace>/runner-images-minimal-terraform:latest
+```
+
+The Docker Hub push is skipped unless the repository variable
+`DOCKERHUB_NAMESPACE` is set; it also needs the `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` repository secrets. To republish an already-released version
+to Docker Hub without rebuilding, dispatch the release workflow with the
+`mirror_version` input — it copies all twelve images straight from GHCR:
+
+```sh
+gh workflow run release.yml -f mirror_version=2.336.0
+```
+
 Publishing is driven by `.github/workflows/release.yml`, which runs on a
 schedule (every 6 hours) and autodetects the latest `actions/runner` release.
 When a version has not been released here yet, it builds both base images with
@@ -317,7 +337,8 @@ GHCR (version + `latest` tags). It then layers every flavor on the just-pushed
 `ubuntu` image (a matrix over all ten), validates each with
 `tests/validate-flavor.sh`, and pushes
 `ghcr.io/gasserp/runner-images-minimal/<flavor>` too, before creating a
-matching `v<version>` GitHub Release. It can also be triggered manually via
+matching `v<version>` GitHub Release. Every image that is pushed to GHCR is
+pushed to Docker Hub in the same step. It can also be triggered manually via
 `workflow_dispatch`, with an optional `runner_version` input to build a
 specific version instead of the autodetected latest.
 
