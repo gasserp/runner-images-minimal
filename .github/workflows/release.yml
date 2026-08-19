@@ -346,3 +346,26 @@ jobs:
               "${SRC}"
             echo "::endgroup::"
           done
+
+  # Docker Hub repo pages are not populated by a push, so the descriptions are
+  # generated from one template and PATCHed after images land. Runs on both
+  # paths: after a full release, and after a mirror-only dispatch.
+  dockerhub-descriptions:
+    name: Sync Docker Hub descriptions
+    runs-on: ubuntu-latest
+    needs: [release, mirror]
+    if: |
+      always() && vars.DOCKERHUB_NAMESPACE != ''
+      && (needs.release.result == 'success' || needs.mirror.result == 'success')
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Publish descriptions
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: scripts/dockerhub-descriptions.sh sync
